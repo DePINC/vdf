@@ -54,14 +54,34 @@ FetchContent_MakeAvailable(chiavdf)
 
 include(ExternalProject)
 if (INCLUDE_CHIAPOS)
+    FetchContent_Declare(
+        blake3
+        GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
+        GIT_TAG        1.5.0
+        PATCH_COMMAND git apply --reject ${CMAKE_CURRENT_SOURCE_DIR}/blake3-fix.patch || true
+    )
+
+    FetchContent_GetProperties(blake3)
+    if(NOT blake3_POPULATED)
+        FetchContent_Populate(blake3)
+
+        # Set BLAKE3 to build as a static library
+        set(BUILD_SHARED_LIBS FALSE CACHE BOOL "Build static libraries" FORCE)
+
+        add_subdirectory(${blake3_SOURCE_DIR}/c ${blake3_BINARY_DIR})
+        BLAKE3_DISABLE_SIMD()
+    endif()
+
+    set(BLAKE3_SRC ${blake3_SOURCE_DIR}/c)
+    set(BLAKE3_INCLUDE_DIR ${blake3_SOURCE_DIR}/c)
+
     ExternalProject_Add(chiapos
         GIT_REPOSITORY https://github.com/Chia-Network/chiapos
-        GIT_TAG 1.0.6
+        GIT_TAG 2.0.4
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ""
         INSTALL_COMMAND ""
         TEST_COMMAND ""
-        PATCH_COMMAND git apply --reject ${CMAKE_CURRENT_SOURCE_DIR}/chiapos-improved.patch > /dev/null 2>&1 || true
     )
     ExternalProject_Get_property(chiapos SOURCE_DIR)
     set(chiapos_SOURCE_DIR ${SOURCE_DIR})
@@ -121,23 +141,6 @@ if (INCLUDE_CHIAPOS)
             RESULT_VARIABLE result
             OUTPUT_VARIABLE OSX_NATIVE_ARCHITECTURE
             OUTPUT_STRIP_TRAILING_WHITESPACE)
-    ENDIF()
-
-    IF (WIN32)
-        set(BLAKE3_SRC
-            ${chiapos_SOURCE_DIR}/src/b3/blake3.c
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_portable.c
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_dispatch.c
-        )
-    ELSE()
-        set(BLAKE3_SRC
-            ${chiapos_SOURCE_DIR}/src/b3/blake3.c
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_portable.c
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_dispatch.c
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_avx2_x86-64_unix.S
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_avx512_x86-64_unix.S
-            ${chiapos_SOURCE_DIR}/src/b3/blake3_sse41_x86-64_unix.S
-        )
     ENDIF()
 
     set(CHIAPOS_LIB_SRCS
@@ -259,10 +262,11 @@ if (BUILD_TEST)
     if (INCLUDE_CHIAPOS)
         add_executable(chiapos_test src/simple_test.cpp src/vdf_utils.cpp)
         target_compile_definitions(chiapos_test PRIVATE ${CHIAPOS_COMPILE_DEFS})
-        target_link_libraries(chiapos_test PRIVATE GTest::gtest GTest::gtest_main time_vdf)
+        target_link_libraries(chiapos_test PRIVATE GTest::gtest GTest::gtest_main time_vdf blake3)
         target_include_directories(chiapos_test PRIVATE
             ${chiapos_SOURCE_DIR}/src
             ${chiapos_SOURCE_DIR}/lib/include
+            ${BLAKE3_INCLUDE_DIR}
         )
     endif()
 endif(BUILD_TEST)
