@@ -12,7 +12,6 @@ endif()
 
 enable_language(C CXX ASM)
 
-option(INCLUDE_CHIAPOS "Fetch and build chiapos" ON)
 option(BUILD_TEST "Build test" OFF)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES Darwin)
@@ -52,122 +51,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(chiavdf)
 
-include(ExternalProject)
-if (INCLUDE_CHIAPOS)
-    FetchContent_Declare(
-        blake3
-        GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
-        GIT_TAG        1.5.0
-        PATCH_COMMAND git apply --reject ${CMAKE_CURRENT_SOURCE_DIR}/blake3-fix.patch || true
-    )
-
-    FetchContent_GetProperties(blake3)
-    if(NOT blake3_POPULATED)
-        FetchContent_Populate(blake3)
-
-        # Set BLAKE3 to build as a static library
-        set(BUILD_SHARED_LIBS FALSE CACHE BOOL "Build static libraries" FORCE)
-
-        add_subdirectory(${blake3_SOURCE_DIR}/c ${blake3_BINARY_DIR})
-        BLAKE3_DISABLE_SIMD()
-    endif()
-
-    set(BLAKE3_SRC ${blake3_SOURCE_DIR}/c)
-    set(BLAKE3_INCLUDE_DIR ${blake3_SOURCE_DIR}/c)
-
-    ExternalProject_Add(chiapos
-        GIT_REPOSITORY https://github.com/Chia-Network/chiapos
-        GIT_TAG 2.0.4
-        CONFIGURE_COMMAND ""
-        BUILD_COMMAND ""
-        INSTALL_COMMAND ""
-        TEST_COMMAND ""
-    )
-    ExternalProject_Get_property(chiapos SOURCE_DIR)
-    set(chiapos_SOURCE_DIR ${SOURCE_DIR})
-    message(STATUS "chiapos_src: ${chiapos_SOURCE_DIR}")
-
-    find_program(CCACHE_PROGRAM ccache)
-    if(CCACHE_PROGRAM)
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-    endif()
-
-    set(FSE_LIB ${chiapos_SOURCE_DIR}/lib/FiniteStateEntropy/lib)
-    set(FSE_FILES
-        ${FSE_LIB}/fse_compress.c
-        ${FSE_LIB}/fse_decompress.c
-        ${FSE_LIB}/entropy_common.c
-        ${FSE_LIB}/hist.c
-    )
-
-    include_directories(
-        ${INCLUDE_DIRECTORIES}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/include
-        ${cxxopts_SOURCE_DIR}/include
-        ${gulrak_SOURCE_DIR}/include/ghc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/FiniteStateEntropy/lib
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/test
-    )
-
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -masm=intel")
-    IF (CMAKE_BUILD_TYPE STREQUAL "RELEASE")
-        set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
-        set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
-    ELSE()
-        set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
-        set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0")
-    ENDIF()
-
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -g")
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
-
-    IF (CMAKE_BUILD_TYPE STREQUAL "ASAN")
-        set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1 -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined")
-        set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O1 -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined")
-        set (CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined")
-    ENDIF()
-
-    IF (CMAKE_BUILD_TYPE STREQUAL "TSAN")
-        set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -fno-omit-frame-pointer -fsanitize=thread")
-        set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -fno-omit-frame-pointer -fsanitize=thread")
-        set (CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=thread")
-    ENDIF()
-
-    IF (APPLE)
-        # on macOS "uname -m" returns the architecture (x86_64 or arm64)
-        execute_process(
-            COMMAND uname -m
-            RESULT_VARIABLE result
-            OUTPUT_VARIABLE OSX_NATIVE_ARCHITECTURE
-            OUTPUT_STRIP_TRAILING_WHITESPACE)
-    ENDIF()
-
-    set(CHIAPOS_LIB_SRCS
-        ${BLAKE3_SRC}
-        ${FSE_FILES}
-        ${chiapos_SOURCE_DIR}/src/chacha8.c
-    )
-    set_source_files_properties(${CHIAPOS_LIB_SRCS} PROPERTIES GENERATED TRUE)
-
-    if (WIN32)
-        set(CHIAPOS_COMPILE_DEFS -DBLAKE3_NO_AVX512 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_SSE41)
-    endif()
-    install(DIRECTORY ${chiapos_SOURCE_DIR}/src
-        DESTINATION include/chiapos
-        FILES_MATCHING PATTERN "*.hpp"
-                       PATTERN "*.h"
-    )
-    install(DIRECTORY ${chiapos_SOURCE_DIR}/lib/include
-        DESTINATION include/chiapos/lib
-        FILES_MATCHING PATTERN "*.hpp"
-    )
-    install(DIRECTORY ${FSE_LIB}
-        DESTINATION include/chiapos/lib/FiniteStateEntropy
-        FILES_MATCHING PATTERN "*.h"
-    )
-endif()
-
 set(UINT128_SRC ${chiavdf_SOURCE_DIR}/src/uint128_t/uint128_t.cpp)
 
 # Setup the way to retrieve GMP source
@@ -188,6 +71,7 @@ if(APPLE)
 else()
     set(GMP_PREFIX_DIR ${CMAKE_CURRENT_BINARY_DIR}/gmp)
     set(GMP_SOURCE_DIR ${GMP_PREFIX_DIR}/src)
+    include(ExternalProject)
     ExternalProject_Add(GMP
         URL https://github.com/wbhart/mpir/archive/refs/tags/mpir-3.0.0.tar.gz
         URL_HASH SHA256=86a5039badc3e6738219a262873a1db5513405e15ece9527b718fcd0fac09bb2
@@ -212,7 +96,7 @@ set(VDF_LIB_SRCS
     ${CHIAVDF_SRC}
 )
 add_library(time_vdf STATIC ${VDF_LIB_SRCS} ${CHIAPOS_LIB_SRCS})
-add_dependencies(time_vdf GMP chiapos)
+add_dependencies(time_vdf GMP)
 target_compile_options(time_vdf PRIVATE ${PIEFLAG} ${OPTIMIZEFLAGS} ${VISIBILITY_HIDDEN_FLAG})
 target_compile_definitions(time_vdf PRIVATE ${CHIAPOS_COMPILE_DEFS})
 target_compile_features(time_vdf PRIVATE cxx_std_17)
