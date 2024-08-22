@@ -24,7 +24,6 @@ add_compile_definitions(
 
 if (${CMAKE_CXX_COMPILER_ID} MATCHES ^.*Clang.*$)
     set(PIEFLAG "-fno-PIE")
-    set(PIELINKOPTS "-no-pie")
 else()
     set(PIEFLAG "-no-pie")
     set(PIELINKOPTS "-no-pie")
@@ -57,35 +56,44 @@ set(UINT128_SRC ${chiavdf_SOURCE_DIR}/src/uint128_t/uint128_t.cpp)
 if (WIN32)
     set(STATIC_CXXFLAGS "-static -static-libstdc++ -static-libgcc")
 endif()
+
 message(STATUS "flags: ${STATIC_CXXFLAGS}")
 if(STATIC_CXXFLAGS)
     string(REPLACE " " ";" TARGET_STATIC_CXXFLAGS ${STATIC_CXXFLAGS})
 endif(STATIC_CXXFLAGS)
 
-if(APPLE)
-    find_path(GMP_INCLUDE_DIR gmp.h)
-    find_path(GMPXX_INCLUDE_DIR gmpxx.h)
-    find_library(GMP_LIBRARIES gmp)
-    find_library(GMPXX_LIBRARIES gmpxx)
-    add_custom_target(GMP)
+set(GMP_PREFIX_DIR ${CMAKE_CURRENT_BINARY_DIR}/gmp)
+
+if (APPLE)
+    set(GMP_URL https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz)
+    set(GMP_HASH SHA256=a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898)
+    set(GMP_INST_CMD make install)
+    set(GMP_CONFIG_CMD ./configure CC=gcc --enable-cxx --enable-static --disable-shared --with-pic --prefix=${GMP_PREFIX_DIR})
+    set(GMP_LIBRARIES ${GMP_PREFIX_DIR}/lib/libgmp.a)
+    set(GMPXX_LIBRARIES ${GMP_PREFIX_DIR}/lib/libgmpxx.a)
 else()
-    set(GMP_PREFIX_DIR ${CMAKE_CURRENT_BINARY_DIR}/gmp)
-    set(GMP_SOURCE_DIR ${GMP_PREFIX_DIR}/src)
-    include(ExternalProject)
-    ExternalProject_Add(GMP
-        URL https://github.com/wbhart/mpir/archive/refs/tags/mpir-3.0.0.tar.gz
-        URL_HASH SHA256=86a5039badc3e6738219a262873a1db5513405e15ece9527b718fcd0fac09bb2
-        SOURCE_DIR "${GMP_SOURCE_DIR}"
-        CONFIGURE_COMMAND ./autogen.sh && ./configure --enable-cxx --enable-static --disable-shared --prefix=${GMP_PREFIX_DIR} --host=${TOOLCHAIN_PREFIX} CC_FOR_BUILD=gcc CXXFLAGS=${STATIC_CXXFLAGS}
-        TEST_COMMAND ""
-        BUILD_IN_SOURCE 1
-        INSTALL_COMMAND make install && ln -f -s ${GMP_PREFIX_DIR}/include/mpir.h ${GMP_PREFIX_DIR}/include/gmp.h && ln -f -s ${GMP_PREFIX_DIR}/include/mpirxx.h ${GMP_PREFIX_DIR}/include/gmpxx.h
-    )
-    set(GMP_INCLUDE_DIR ${GMP_PREFIX_DIR}/include)
-    set(GMPXX_INCLUDE_DIR ${GMP_PREFIX_DIR}/include)
+    set(GMP_URL https://github.com/wbhart/mpir/archive/refs/tags/mpir-3.0.0.tar.gz)
+    set(GMP_HASH SHA256=86a5039badc3e6738219a262873a1db5513405e15ece9527b718fcd0fac09bb2)
+    set(GMP_INST_CMD make install && ln -f -s ${GMP_PREFIX_DIR}/include/mpir.h ${GMP_PREFIX_DIR}/include/gmp.h && ln -f -s ${GMP_PREFIX_DIR}/include/mpirxx.h ${GMP_PREFIX_DIR}/include/gmpxx.h)
+    set(GMP_CONFIG_CMD ./autogen.sh && ./configure --enable-cxx --enable-static --disable-shared --prefix=${GMP_PREFIX_DIR} --host=${TOOLCHAIN_PREFIX} CC_FOR_BUILD=gcc CXXFLAGS=${STATIC_CXXFLAGS})
     set(GMP_LIBRARIES ${GMP_PREFIX_DIR}/lib/libmpir.a)
     set(GMPXX_LIBRARIES ${GMP_PREFIX_DIR}/lib/libmpirxx.a)
 endif()
+
+set(GMP_SOURCE_DIR ${GMP_PREFIX_DIR}/src)
+include(ExternalProject)
+ExternalProject_Add(GMP
+    URL ${GMP_URL}
+    URL_HASH ${GMP_HASH}
+    SOURCE_DIR "${GMP_SOURCE_DIR}"
+    CONFIGURE_COMMAND ${GMP_CONFIG_CMD}
+    TEST_COMMAND ""
+    BUILD_IN_SOURCE 1
+    DOWNLOAD_EXTRACT_TIMESTAMP true
+    INSTALL_COMMAND ${GMP_INST_CMD}
+)
+set(GMP_INCLUDE_DIR ${GMP_PREFIX_DIR}/include)
+set(GMPXX_INCLUDE_DIR ${GMP_PREFIX_DIR}/include)
 
 set(CHIAVDF_SRC
     ${chiavdf_SOURCE_DIR}/src/refcode/lzcnt.c
@@ -97,16 +105,16 @@ set(VDF_LIB_SRCS
 )
 add_library(time_vdf STATIC ${VDF_LIB_SRCS} ${CHIAPOS_LIB_SRCS})
 add_dependencies(time_vdf GMP)
-target_compile_options(time_vdf PRIVATE ${PIEFLAG} ${OPTIMIZEFLAGS} ${VISIBILITY_HIDDEN_FLAG})
-target_compile_definitions(time_vdf PRIVATE ${CHIAPOS_COMPILE_DEFS})
-target_compile_features(time_vdf PRIVATE cxx_std_17)
-target_link_options(time_vdf PRIVATE ${PIELINKOPTS} ${LTOFLAG})
-target_include_directories(time_vdf PRIVATE
+target_compile_options(time_vdf PUBLIC ${PIEFLAG} ${OPTIMIZEFLAGS} ${VISIBILITY_HIDDEN_FLAG})
+target_compile_definitions(time_vdf PUBLIC ${CHIAPOS_COMPILE_DEFS})
+target_compile_features(time_vdf PUBLIC cxx_std_17)
+target_link_options(time_vdf PUBLIC ${PIELINKOPTS} ${LTOFLAG})
+target_include_directories(time_vdf PUBLIC
     ${GMP_INCLUDE_DIR}
     ${GMPXX_INCLUDE_DIR}
     ${chiavdf_SOURCE_DIR}/src
 )
-target_link_libraries(time_vdf PRIVATE ${GMP_LIBRARIES} ${GMPXX_LIBRARIES})
+target_link_libraries(time_vdf PUBLIC ${GMP_LIBRARIES} ${GMPXX_LIBRARIES})
 
 set(INSTALL_INCLUDE_FILES
     src/vdf_types.h
@@ -134,18 +142,11 @@ if (BUILD_TEST)
     )
     add_executable(vdf_test ${VDF_TEST_SRCS})
     add_dependencies(vdf_test GMP)
-    target_compile_options(vdf_test PRIVATE ${PIEFLAG} ${OPTIMIZEFLAGS} ${TARGET_STATIC_CXXFLAGS})
-    target_link_options(vdf_test PRIVATE ${PIELINKOPTS} ${LTOFLAG} ${TARGET_STATIC_CXXFLAGS})
-    target_include_directories(vdf_test PRIVATE
-        ${GMP_INCLUDE_DIR}
-        ${GMPXX_INCLUDE_DIR}
-        ${chiavdf_SOURCE_DIR}/src
-    )
-    target_link_libraries(vdf_test PRIVATE GTest::gtest GTest::gtest_main ${GMP_LIBRARIES} ${GMPXX_LIBRARIES} time_vdf)
+    target_link_options(vdf_test PRIVATE ${TARGET_STATIC_CXXFLAGS})
+    target_link_libraries(vdf_test PRIVATE GTest::gtest_main time_vdf)
     add_test(vdf_test ${CMAKE_CURRENT_BINARY_DIR}/vdf_test)
     if (INCLUDE_CHIAPOS)
         add_executable(chiapos_test src/simple_test.cpp src/vdf_utils.cpp)
-        target_compile_definitions(chiapos_test PRIVATE ${CHIAPOS_COMPILE_DEFS})
         target_link_libraries(chiapos_test PRIVATE GTest::gtest GTest::gtest_main time_vdf blake3)
         target_include_directories(chiapos_test PRIVATE
             ${chiapos_SOURCE_DIR}/src
